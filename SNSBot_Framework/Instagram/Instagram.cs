@@ -2,10 +2,10 @@
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using SNSBot.Error;
-using SNSBot.Cookies;
 using SNSBot.Instagram.JSON;
 
 namespace SNSBot.Instagram
@@ -13,7 +13,8 @@ namespace SNSBot.Instagram
 	public class Instagram
 	{
 
-		private readonly int _cookieIndex;
+		private readonly HttpClient _client;
+		private readonly CookieContainer _cookie;
 	
 		/*
 		 * Instagram()
@@ -21,22 +22,13 @@ namespace SNSBot.Instagram
 		 */
 		public Instagram()
 		{
-			_cookieIndex = CookieHandler.AddCookieContainer();
+			_client  = new HttpClient(new HttpClientHandler{CookieContainer = _cookie});
 
-			HttpClientHandler handler = new HttpClientHandler {CookieContainer = CookieHandler.GetCookieContainer(_cookieIndex) };
-
-			HttpClient client  = new HttpClient(handler);
-
-			HttpResponseMessage response = client.GetAsync("https://www.instagram.com/").Result;
+			HttpResponseMessage response = _client.GetAsync("https://www.instagram.com/").Result;
 
 			if (!response.IsSuccessStatusCode)
 				throw new HTTPError(response.StatusCode.ToString());
 
-		}
-
-		~Instagram()
-		{
-			CookieHandler.DeleteCookieContainer(_cookieIndex);
 		}
 
 		/*
@@ -45,21 +37,25 @@ namespace SNSBot.Instagram
 		 */
 		public Boolean Login(String id, String pass)
 		{
-			HttpClientHandler handler = new HttpClientHandler();
-			handler.CookieContainer = CookieHandler.GetCookieContainer(_cookieIndex);
-
-			HttpClient client = new HttpClient(handler);
-			client.DefaultRequestHeaders.Add("X-Instagram-AJAX","1");
-			client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
-			client.DefaultRequestHeaders.Add("X-CSRFToken", CookieHandler.GetCookieContainer(_cookieIndex).GetCookies(new Uri("https://www.instagram.com/"))["csrftoken"]?.Value);
-			client.DefaultRequestHeaders.Referrer = new Uri("https://www.instagram.com/");
-
-			HttpResponseMessage response = client.PostAsync("https://www.instagram.com/accounts/login/ajax/", new FormUrlEncodedContent(
-				new List<KeyValuePair<string, string>>
+			HttpRequestMessage request = new HttpRequestMessage
+			{
+				RequestUri = new Uri("https://www.instagram.com/accounts/login/ajax/"),
+				Method = HttpMethod.Post,
+				Headers =
+				{
+					{"X-Instagram-AJAX", "1"},
+					{"X-Requested_With", "XMLHttpRequest"},
+					{"X-CSRFToken", _cookie.GetCookies(new Uri("https://www.instagram.com/"))["csrfToken"]?.Value},
+					{HttpRequestHeader.Referer.ToString(), "https://www.instagram.com/"}
+				},
+				Content = new FormUrlEncodedContent(new []
 				{
 					new KeyValuePair<string, string>("username", id),
 					new KeyValuePair<string, string>("password", pass)
-				})).Result;
+				})
+			};
+
+			HttpResponseMessage response = _client.SendAsync(request).Result;
 
 			if (!response.IsSuccessStatusCode)
 				throw new HTTPError(response.StatusCode.ToString());
@@ -67,6 +63,7 @@ namespace SNSBot.Instagram
 			JObject json = JObject.Parse(response.Content.ReadAsStringAsync().Result);
 			if ((String) json["status"] != "ok")
 				throw new RequestError();
+
 			return (Boolean) json["authenticated"];
 		}
 
@@ -76,19 +73,23 @@ namespace SNSBot.Instagram
 		 */
 		public InstagramPage GetPage(String username)
 		{
-			return new InstagramPage(_cookieIndex, username, GetUserId(username));
+			return new InstagramPage(_client, _cookie, username, GetUserId(username));
 		}
 
 		private UInt64 GetUserId(String username)
 		{
-			HttpClientHandler handler = new HttpClientHandler();
-			handler.CookieContainer = CookieHandler.GetCookieContainer(_cookieIndex);
+			HttpRequestMessage request = new HttpRequestMessage
+			{
+				RequestUri = new Uri("https://www.instagram.com/" + username + "/?__a=1"),
+				Method = HttpMethod.Get,
+				Headers =
+				{
+					{"X-Requested_With", "XMLHttpRequest"},
+					{HttpRequestHeader.Referer.ToString(), "https://www.instagram.com/" + username + "/"}
+				}
+			};
 
-			HttpClient client = new HttpClient(handler);
-			client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
-			client.DefaultRequestHeaders.Referrer = new Uri("https://www.instagram.com/" + username + "/");
-
-			HttpResponseMessage response = client.GetAsync(new Uri("https://www.instagram.com/" + username + "/?__a=1")).Result;
+			HttpResponseMessage response = _client.SendAsync(request).Result;
 
 			if (!response.IsSuccessStatusCode)
 				throw new HTTPError(response.StatusCode.ToString());

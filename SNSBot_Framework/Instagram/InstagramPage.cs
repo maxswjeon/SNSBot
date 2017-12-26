@@ -1,9 +1,9 @@
 ﻿using System;
+using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
-using SNSBot.Cookies;
 using SNSBot.Error;
 using SNSBot.Instagram.JSON;
 
@@ -13,9 +13,12 @@ namespace SNSBot.Instagram
 	{
 		private InstagramListener _listener;
 		private UInt32 _interval = 300000;
+
 		private readonly String _username;
 		private readonly UInt64 _userId;
-		private readonly int _cookieIndex;
+
+		private readonly HttpClient _client;
+		private readonly CookieContainer _cookie;
 
 		//List has Limitations to Int.MaxValue
 		//Use Int. I think no one will upload it than Int.MaxValue.
@@ -23,13 +26,17 @@ namespace SNSBot.Instagram
 
 		private UInt64 _lastPostId;
 
-		public InstagramPage(int cookieIndex, String username, UInt64 userId)
+		public InstagramPage(HttpClient client, CookieContainer cookie, String username, UInt64 userId)
 		{
 			Timer timer = new Timer(TimerCallback);
 			timer.Change(0, _interval);
+
 			_username = username;
 			_userId = userId;
-			_cookieIndex = cookieIndex;
+
+			_client = client;
+			_cookie = cookie;
+
 			_count = GetCount().Result;
 			_lastPostId = GetLastPost().Result.Id;
 		}
@@ -41,16 +48,19 @@ namespace SNSBot.Instagram
 			{
 				int newCount = count - _count;
 
-				HttpClientHandler handler = new HttpClientHandler();
-				handler.CookieContainer = CookieHandler.GetCookieContainer(_cookieIndex);
+				HttpRequestMessage request = new HttpRequestMessage
+				{
+					RequestUri = new Uri(
+						"https://www.instagram.com/graphql/query/?query_id=17888483320059182&variables=" +
+						Uri.EscapeDataString("{\"id\":\"" + _userId + "\",\"first\":" + (newCount + 1) + "}")),
+					Headers =
+					{
+						{"X-Requested-With", "XMLHttpRequest"},
+						{HttpRequestHeader.Referer.ToString(), "https://www.instagram.com/" + _username + "/"}
+					}
+				};
 
-				HttpClient client = new HttpClient(handler);
-				client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
-				client.DefaultRequestHeaders.Referrer = new Uri("https://www.instagram.com/" + _username + "/");
-
-				HttpResponseMessage response = await client.GetAsync(new Uri(
-					"https://www.instagram.com/graphql/query/?query_id=17888483320059182&variables=" +
-					Uri.EscapeDataString("{\"id\":\"" + _userId + "\",\"first\":" + (newCount + 1) + "}")));
+				HttpResponseMessage response = await _client.SendAsync(request);
 
 				if (!response.IsSuccessStatusCode)
 					throw new HTTPError(response.StatusCode.ToString());
@@ -63,7 +73,7 @@ namespace SNSBot.Instagram
 				if(query.Data.User.EdgeOwnerToTimelineMedia.Edges[newCount].Node.Id != _lastPostId)
 					throw new RequestError("Post Update was too fast to manage.");
 
-				for(int i = newCount; i > 0; ++i)
+				for(int i = newCount; i > 0; --i)
 					_listener.onNewArticle(new InstagramPost(query.Data.User.EdgeOwnerToTimelineMedia.Edges[i - 1].Node));
 
 				_lastPostId = query.Data.User.EdgeOwnerToTimelineMedia.Edges[0].Node.Id;
@@ -87,14 +97,19 @@ namespace SNSBot.Instagram
 
 		private async Task<Int32> GetCount()
 		{
-			HttpClientHandler handler = new HttpClientHandler();
-			handler.CookieContainer = CookieHandler.GetCookieContainer(_cookieIndex);
+			HttpRequestMessage request = new HttpRequestMessage
+			{
+				RequestUri = new Uri(
+					"https://www.instagram.com/graphql/query/?query_id=17888483320059182&variables=" + 
+					Uri.EscapeDataString("{\"id\":\"" + _userId + "\",\"first\":0}")),
+				Headers =
+				{
+					{"X-Requested-With", "XMLHttpRequest"},
+					{HttpRequestHeader.Referer.ToString(), "https://www.instagram.com/" + _username + "/"}
+				}
+			};
 
-			HttpClient client = new HttpClient(handler);
-			client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
-			client.DefaultRequestHeaders.Referrer = new Uri("https://www.instagram.com/" + _username + "/");
-
-			HttpResponseMessage response = await client.GetAsync(new Uri("https://www.instagram.com/graphql/query/?query_id=17888483320059182&variables=" + Uri.EscapeDataString("{\"id\":\"" + _userId + "\",\"first\":0}")));
+			HttpResponseMessage response = await _client.SendAsync(request);
 
 			if(!response.IsSuccessStatusCode)
 				throw new HTTPError(response.StatusCode.ToString());
@@ -109,14 +124,19 @@ namespace SNSBot.Instagram
 
 		private async Task<InstagramPost> GetLastPost()
 		{
-			HttpClientHandler handler = new HttpClientHandler();
-			handler.CookieContainer = CookieHandler.GetCookieContainer(_cookieIndex);
+			HttpRequestMessage request = new HttpRequestMessage
+			{
+				RequestUri = new Uri(
+					"https://www.instagram.com/graphql/query/?query_id=17888483320059182&variables=" + 
+					Uri.EscapeDataString("{\"id\":\"" + _userId + "\",\"first\":1}")),
+				Headers =
+				{
+					{"X-Requested-With", "XMLHttpRequest"},
+					{HttpRequestHeader.Referer.ToString(), "https://www.instagram.com/" + _username + "/"}
+				}
+			};
 
-			HttpClient client = new HttpClient(handler);
-			client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
-			client.DefaultRequestHeaders.Referrer = new Uri("https://www.instagram.com/" + _username + "/");
-
-			HttpResponseMessage response = await client.GetAsync(new Uri("https://www.instagram.com/graphql/query/?query_id=17888483320059182&variables=" + Uri.EscapeDataString("{\"id\":\"" + _userId + "\",\"first\":1}")));
+			HttpResponseMessage response = await _client.SendAsync(request);
 
 			if (!response.IsSuccessStatusCode)
 				throw new HTTPError(response.StatusCode.ToString());
